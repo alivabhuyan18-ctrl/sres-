@@ -10,4 +10,23 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status;
+    const url = error.config?.url || "";
+    const isAuthRequest = url.includes("/auth/login");
+
+    if (status === 401 && !isAuthRequest) {
+      localStorage.removeItem("sres_token");
+      localStorage.removeItem("sres_user");
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export default api;

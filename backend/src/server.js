@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
 import { connectDB } from "./config/db.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -18,6 +19,7 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
 app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
+app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 app.get("/api/health", (req, res) => res.json({ status: "ok", service: "student-registration-enrolment-system" }));
 app.use("/api/auth", authRoutes);

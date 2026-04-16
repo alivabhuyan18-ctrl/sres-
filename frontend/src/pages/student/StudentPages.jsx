@@ -1,11 +1,27 @@
-import { Bell, BookOpen, ClipboardCheck, CreditCard, Hourglass, Pencil, Printer, Receipt, Save, ShieldCheck, Upload, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Bell, BookOpen, CalendarDays, CheckCircle2, ClipboardCheck, CreditCard, FileText, Hourglass, Pencil, Printer, Receipt, Save, Settings2, ShieldCheck, Upload, WalletCards, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api from "../../api/client";
-import DataTable from "../../components/DataTable";
 import Loader from "../../components/Loader";
 import StatCard from "../../components/StatCard";
+import {
+  allotmentFields,
+  allotmentGroups,
+  basicFields,
+  communicationFields,
+  communicationGroups,
+  documentSummary,
+  getMissingRequiredFields,
+  getNestedValue,
+  personalFields,
+  personalGroups,
+  profileCompletion,
+  sectionStatus,
+  setNestedValue
+} from "./profileConfig";
+import { escapeHtml, openPrintableDocument } from "../../utils/printDocument";
 
 const useStudentData = () => {
   const [state, setState] = useState({ loading: true, data: null });
@@ -36,6 +52,53 @@ const EmptyState = ({ title = "Unable to load data", message = "Please refresh t
   </div>
 );
 
+const uploadFormFile = async (url, file) => {
+  const payload = new FormData();
+  payload.append("file", file);
+  const { data } = await api.post(url, payload, {
+    headers: { "Content-Type": "multipart/form-data" }
+  });
+  return data;
+};
+
+const printProfileDocument = (profile) => {
+  const rows = [
+    ["Registration No.", profile.identifier],
+    ["Application No.", profile.applicationNo],
+    ["Name", profile.name],
+    ["Programme", profile.programme],
+    ["Programme Type", profile.programmeType],
+    ["Branch", profile.branch],
+    ["Semester", profile.semester],
+    ["Email", profile.email],
+    ["Phone", profile.phone],
+    ["Admission Status", profile.admissionStatus]
+  ];
+
+  const profileWindow = openPrintableDocument({
+    title: "Student Profile Summary",
+    subtitle: "Use your browser print dialog to save this profile as a PDF.",
+    content: `
+      <div class="grid">
+        ${rows
+          .map(
+            ([label, value]) => `
+              <div class="card">
+                <div class="label">${escapeHtml(label)}</div>
+                <div class="value">${escapeHtml(value || "-")}</div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    `
+  });
+  if (!profileWindow) {
+    toast.error("Allow pop-ups in your browser to print the profile.");
+  }
+  return profileWindow;
+};
+
 export const StudentDashboard = () => {
   const { loading, data } = useStudentData();
   if (loading) return <Loader />;
@@ -62,42 +125,21 @@ export const StudentDashboard = () => {
   );
 };
 
-const getNestedValue = (source, path) => path.split(".").reduce((value, key) => value?.[key], source) || "";
-
-const setNestedValue = (source, path, value) => {
-  const keys = path.split(".");
-  const next = { ...source };
-  let current = next;
-  keys.forEach((key, index) => {
-    if (index === keys.length - 1) {
-      current[key] = value;
-      return;
-    }
-    current[key] = { ...(current[key] || {}) };
-    current = current[key];
-  });
-  return next;
-};
-
-const fileToDataUrl = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-
-const FieldGrid = ({ fields, form, setForm, editable, columns = "md:grid-cols-2 xl:grid-cols-3" }) => (
+const FieldGrid = ({ fields, form, setForm, editable, columns = "md:grid-cols-2 xl:grid-cols-3", errors = {}, onFieldChange }) => (
   <div className={`grid gap-4 ${columns}`}>
     {fields.map((field) => (
       <label key={field.path} className="text-xs font-semibold uppercase tracking-wide text-ink/55 dark:text-white/55">
-        {field.label}
+        <span className="inline-flex items-center gap-1">
+          {field.label}
+          {field.required && <span className="text-coral">*</span>}
+        </span>
         <input
           disabled={!editable}
-          className="focus-ring mt-2 w-full rounded-lg border border-ink/20 bg-paper px-3 py-2 text-sm normal-case tracking-normal text-ink disabled:cursor-not-allowed disabled:bg-ink/5 disabled:text-ink/65 dark:border-white/10 dark:bg-white/10 dark:text-white dark:disabled:bg-white/5 dark:disabled:text-white/65"
+          className={`focus-ring mt-2 w-full rounded-lg border bg-paper px-3 py-2 text-sm normal-case tracking-normal text-ink disabled:cursor-not-allowed disabled:bg-ink/5 disabled:text-ink/65 dark:bg-white/10 dark:text-white dark:disabled:bg-white/5 dark:disabled:text-white/65 ${errors[field.path] ? "border-coral" : "border-ink/20 dark:border-white/10"}`}
           value={getNestedValue(form, field.path)}
-          onChange={(event) => setForm(setNestedValue(form, field.path, event.target.value))}
+          onChange={(event) => (onFieldChange ? onFieldChange(field.path, event.target.value) : setForm(setNestedValue(form, field.path, event.target.value)))}
         />
+        {errors[field.path] && <span className="mt-1 block text-[11px] font-medium normal-case tracking-normal text-coral">{errors[field.path]}</span>}
       </label>
     ))}
   </div>
@@ -115,7 +157,7 @@ const StatusBadge = ({ status }) => {
   return <span className={`rounded-lg px-2 py-1 text-xs font-bold ${styles[status] || styles.Incomplete}`}>{status}</span>;
 };
 
-const ProfileSection = ({ title, subtitle, status, children, editing, onEdit, onSave, onCancel }) => (
+const ProfileSection = ({ title, subtitle, status, children, editing, onEdit, onSave, onCancel, requiredHint = false }) => (
   <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
@@ -124,6 +166,7 @@ const ProfileSection = ({ title, subtitle, status, children, editing, onEdit, on
           {status && <StatusBadge status={status} />}
         </div>
         {subtitle && <p className="mt-1 text-sm text-ink/55 dark:text-white/55">{subtitle}</p>}
+        {requiredHint && <p className="mt-2 text-xs font-medium uppercase tracking-wide text-coral">Fields marked * are mandatory.</p>}
       </div>
       <div className="flex gap-2">
         {editing ? (
@@ -146,267 +189,82 @@ const ProfileSection = ({ title, subtitle, status, children, editing, onEdit, on
   </section>
 );
 
-const basicFields = [
-  { label: "Registration No.", path: "identifier" },
-  { label: "Application No.", path: "applicationNo" },
-  { label: "Name", path: "name" },
-  { label: "Rank", path: "rank" },
-  { label: "Admission Status", path: "admissionStatus" },
-  { label: "Joining Year", path: "joiningYear" },
-  { label: "Semester", path: "semester" },
-  { label: "Programme", path: "programme" },
-  { label: "Programme Type", path: "programmeType" },
-  { label: "Branch", path: "branch" }
-];
-
-const allotmentFields = [
-  { label: "Batch", path: "allotmentDetails.batch" },
-  { label: "Joining Year", path: "allotmentDetails.joiningYear" },
-  { label: "Admission Dt.", path: "allotmentDetails.admissionDate" },
-  { label: "Admission Type", path: "allotmentDetails.admissionType" },
-  { label: "Fee Type", path: "allotmentDetails.feeType" },
-  { label: "Is TFW", path: "allotmentDetails.isTfw" },
-  { label: "Is PC", path: "allotmentDetails.isPc" },
-  { label: "Seat Category", path: "allotmentDetails.seatCategory" },
-  { label: "Category", path: "allotmentDetails.category" },
-  { label: "Caste", path: "allotmentDetails.caste" },
-  { label: "OJEE Rank", path: "allotmentDetails.ojeeRank" },
-  { label: "Is Lateral", path: "allotmentDetails.isLateral" },
-  { label: "Hostel Willingness", path: "allotmentDetails.hostelWillingness" },
-  { label: "Hostel Allocated", path: "allotmentDetails.hostelAllocated" },
-  { label: "Hostel Name", path: "allotmentDetails.hostelName" },
-  { label: "Interested in Internal Sliding", path: "allotmentDetails.interestedInternalSliding" }
-];
-
-const personalFields = [
-  { label: "DOB", path: "personalDetails.dob" },
-  { label: "Gender", path: "personalDetails.gender" },
-  { label: "Father Name", path: "personalDetails.fatherName" },
-  { label: "Father Occupation", path: "personalDetails.fatherOccupation" },
-  { label: "Father Aadhar", path: "personalDetails.fatherAadhar" },
-  { label: "Mother Name", path: "personalDetails.motherName" },
-  { label: "Mother Occupation", path: "personalDetails.motherOccupation" },
-  { label: "Mother Aadhar", path: "personalDetails.motherAadhar" },
-  { label: "Annual Income", path: "personalDetails.annualIncome" },
-  { label: "Blood Group", path: "personalDetails.bloodGroup" },
-  { label: "Mother Tongue", path: "personalDetails.motherTongue" },
-  { label: "Religion", path: "personalDetails.religion" },
-  { label: "Nationality", path: "personalDetails.nationality" },
-  { label: "Country", path: "personalDetails.country" },
-  { label: "Aadhar No.", path: "personalDetails.aadharNo" },
-  { label: "Mole or Similar", path: "personalDetails.moleOrSimilar" },
-  { label: "Account No.", path: "personalDetails.accountNo" },
-  { label: "Bank Name", path: "personalDetails.bankName" },
-  { label: "Bank Branch", path: "personalDetails.bankBranch" },
-  { label: "IFSC Code", path: "personalDetails.ifscCode" }
-];
-
-const communicationFields = [
-  { label: "Landline", path: "communicationDetails.landline" },
-  { label: "Parent Mobile", path: "communicationDetails.parentMobile" },
-  { label: "Student Mobile WhatsApp", path: "communicationDetails.studentMobileWhatsapp" },
-  { label: "Student Email", path: "communicationDetails.studentEmail" },
-  { label: "Parent Email", path: "communicationDetails.parentEmail" },
-  { label: "Correspondence Guardian", path: "communicationDetails.correspondenceGuardian" },
-  { label: "Correspondence Door No.", path: "communicationDetails.correspondenceDoorNo" },
-  { label: "Correspondence Street", path: "communicationDetails.correspondenceStreet" },
-  { label: "Correspondence Village/City", path: "communicationDetails.correspondenceVillageCity" },
-  { label: "Correspondence State", path: "communicationDetails.correspondenceState" },
-  { label: "Correspondence District", path: "communicationDetails.correspondenceDistrict" },
-  { label: "Correspondence Pin Code", path: "communicationDetails.correspondencePinCode" },
-  { label: "Permanent Guardian", path: "communicationDetails.permanentGuardian" },
-  { label: "Permanent Door No.", path: "communicationDetails.permanentDoorNo" },
-  { label: "Permanent Street", path: "communicationDetails.permanentStreet" },
-  { label: "Permanent Village/City", path: "communicationDetails.permanentVillageCity" },
-  { label: "Permanent State", path: "communicationDetails.permanentState" },
-  { label: "Permanent District", path: "communicationDetails.permanentDistrict" },
-  { label: "Permanent Pin Code", path: "communicationDetails.permanentPinCode" }
-];
-
-const FieldGroup = ({ title, fields, form, setForm, editable, columns }) => (
+const FieldGroup = ({ title, fields, form, setForm, editable, columns, errors, onFieldChange }) => (
   <div className="rounded-lg border border-ink/10 bg-paper/70 p-4 dark:border-white/10 dark:bg-white/5">
     <h4 className="mb-4 text-sm font-bold uppercase tracking-wide text-ink/70 dark:text-white/70">{title}</h4>
-    <FieldGrid fields={fields} form={form} setForm={setForm} editable={editable} columns={columns} />
+    <FieldGrid fields={fields} form={form} setForm={setForm} editable={editable} columns={columns} errors={errors} onFieldChange={onFieldChange} />
   </div>
 );
-
-const allotmentGroups = [
-  {
-    title: "Admission Information",
-    fields: [
-      { label: "Batch", path: "allotmentDetails.batch" },
-      { label: "Joining Year", path: "allotmentDetails.joiningYear" },
-      { label: "Admission Dt.", path: "allotmentDetails.admissionDate" },
-      { label: "Admission Type", path: "allotmentDetails.admissionType" },
-      { label: "Fee Type", path: "allotmentDetails.feeType" }
-    ]
-  },
-  {
-    title: "Seat and Category",
-    fields: [
-      { label: "Is TFW", path: "allotmentDetails.isTfw" },
-      { label: "Is PC", path: "allotmentDetails.isPc" },
-      { label: "Seat Category", path: "allotmentDetails.seatCategory" },
-      { label: "Category", path: "allotmentDetails.category" },
-      { label: "Caste", path: "allotmentDetails.caste" },
-      { label: "OJEE Rank", path: "allotmentDetails.ojeeRank" },
-      { label: "Is Lateral", path: "allotmentDetails.isLateral" }
-    ]
-  },
-  {
-    title: "Hostel and Sliding",
-    fields: [
-      { label: "Hostel Willingness", path: "allotmentDetails.hostelWillingness" },
-      { label: "Hostel Allocated", path: "allotmentDetails.hostelAllocated" },
-      { label: "Hostel Name", path: "allotmentDetails.hostelName" },
-      { label: "Interested in Internal Sliding", path: "allotmentDetails.interestedInternalSliding" }
-    ]
-  }
-];
-
-const personalGroups = [
-  {
-    title: "Student Identity",
-    fields: [
-      { label: "DOB", path: "personalDetails.dob" },
-      { label: "Gender", path: "personalDetails.gender" },
-      { label: "Blood Group", path: "personalDetails.bloodGroup" },
-      { label: "Mother Tongue", path: "personalDetails.motherTongue" },
-      { label: "Religion", path: "personalDetails.religion" },
-      { label: "Nationality", path: "personalDetails.nationality" },
-      { label: "Country", path: "personalDetails.country" }
-    ]
-  },
-  {
-    title: "Parent Details",
-    fields: [
-      { label: "Father Name", path: "personalDetails.fatherName" },
-      { label: "Father Occupation", path: "personalDetails.fatherOccupation" },
-      { label: "Father Aadhar", path: "personalDetails.fatherAadhar" },
-      { label: "Mother Name", path: "personalDetails.motherName" },
-      { label: "Mother Occupation", path: "personalDetails.motherOccupation" },
-      { label: "Mother Aadhar", path: "personalDetails.motherAadhar" },
-      { label: "Annual Income", path: "personalDetails.annualIncome" }
-    ]
-  },
-  {
-    title: "Identification and Bank Details",
-    fields: [
-      { label: "Aadhar No.", path: "personalDetails.aadharNo" },
-      { label: "Mole or Similar", path: "personalDetails.moleOrSimilar" },
-      { label: "Account No.", path: "personalDetails.accountNo" },
-      { label: "Bank Name", path: "personalDetails.bankName" },
-      { label: "Bank Branch", path: "personalDetails.bankBranch" },
-      { label: "IFSC Code", path: "personalDetails.ifscCode" }
-    ]
-  }
-];
-
-const communicationGroups = [
-  {
-    title: "Contact Details",
-    fields: [
-      { label: "Landline", path: "communicationDetails.landline" },
-      { label: "Parent Mobile", path: "communicationDetails.parentMobile" },
-      { label: "Student Mobile WhatsApp", path: "communicationDetails.studentMobileWhatsapp" },
-      { label: "Student Email", path: "communicationDetails.studentEmail" },
-      { label: "Parent Email", path: "communicationDetails.parentEmail" }
-    ]
-  },
-  {
-    title: "Correspondence Address",
-    fields: [
-      { label: "Guardian", path: "communicationDetails.correspondenceGuardian" },
-      { label: "Door No.", path: "communicationDetails.correspondenceDoorNo" },
-      { label: "Street", path: "communicationDetails.correspondenceStreet" },
-      { label: "Village/City", path: "communicationDetails.correspondenceVillageCity" },
-      { label: "State", path: "communicationDetails.correspondenceState" },
-      { label: "District", path: "communicationDetails.correspondenceDistrict" },
-      { label: "Pin Code", path: "communicationDetails.correspondencePinCode" }
-    ]
-  },
-  {
-    title: "Permanent Address",
-    fields: [
-      { label: "Guardian", path: "communicationDetails.permanentGuardian" },
-      { label: "Door No.", path: "communicationDetails.permanentDoorNo" },
-      { label: "Street", path: "communicationDetails.permanentStreet" },
-      { label: "Village/City", path: "communicationDetails.permanentVillageCity" },
-      { label: "State", path: "communicationDetails.permanentState" },
-      { label: "District", path: "communicationDetails.permanentDistrict" },
-      { label: "Pin Code", path: "communicationDetails.permanentPinCode" }
-    ]
-  }
-];
-
-const completionPaths = [
-  "identifier",
-  "applicationNo",
-  "name",
-  "rank",
-  "admissionStatus",
-  "joiningYear",
-  "programme",
-  "programmeType",
-  "branch",
-  "personalDetails.dob",
-  "personalDetails.gender",
-  "personalDetails.fatherName",
-  "personalDetails.motherName",
-  "personalDetails.bloodGroup",
-  "personalDetails.aadharNo",
-  "communicationDetails.parentMobile",
-  "communicationDetails.studentMobileWhatsapp",
-  "communicationDetails.studentEmail",
-  "communicationDetails.correspondenceCombined",
-  "communicationDetails.permanentCombined"
-];
-
-const sectionStatus = (fields, form) => fields.every((field) => Boolean(getNestedValue(form, field.path))) ? "Complete" : "Incomplete";
-
-const profileCompletion = (form) => {
-  const filled = completionPaths.filter((path) => Boolean(getNestedValue(form, path))).length;
-  return Math.round((filled / completionPaths.length) * 100);
-};
-
-const documentSummary = (form) => {
-  const docs = [
-    ...(form.qualificationDetails || []).map((item) => item.verificationStatus || "Not Uploaded"),
-    ...(form.certificates || []).map((item) => item.verificationStatus || "Not Uploaded")
-  ];
-  return {
-    total: docs.length,
-    verified: docs.filter((status) => status === "Verified").length,
-    pending: docs.filter((status) => status === "Pending").length,
-    rejected: docs.filter((status) => status === "Rejected").length
-  };
-};
 
 export const StudentProfile = () => {
   const { loading, data, reload } = useStudentData();
   const [form, setForm] = useState({});
   const [editing, setEditing] = useState({});
   const [qrOpen, setQrOpen] = useState(false);
+  const [validationErrors, setValidationErrors] = useState({});
   useEffect(() => {
     if (data?.profile) setForm(data.profile);
   }, [data]);
   if (loading) return <Loader />;
   if (!data) return <EmptyState />;
 
+  const sectionFields = {
+    profile: basicFields,
+    allotment: allotmentFields,
+    personal: personalFields,
+    communication: communicationFields
+  };
+
+  const clearFieldErrors = (paths) =>
+    setValidationErrors((current) => {
+      const next = { ...current };
+      paths.forEach((path) => delete next[path]);
+      return next;
+    });
+
+  const updateFieldValue = (path, value) => {
+    setForm((current) => setNestedValue(current, path, value));
+    clearFieldErrors([path]);
+  };
+
   const saveSection = async (section) => {
-    await api.put("/student/profile", form);
-    toast.success(`${section} updated`);
-    setEditing((current) => ({ ...current, [section]: false }));
-    await reload();
+    const fields = sectionFields[section] || [];
+    const missingFields = getMissingRequiredFields(fields, form);
+    if (missingFields.length) {
+      setValidationErrors((current) => ({
+        ...current,
+        ...Object.fromEntries(missingFields.map((field) => [field.path, `${field.label} is required.`]))
+      }));
+      const fieldPreview = missingFields.slice(0, 3).map((field) => field.label).join(", ");
+      toast.error(
+        missingFields.length > 3
+          ? `Complete the required fields first: ${fieldPreview}, and more.`
+          : `Complete the required fields first: ${fieldPreview}.`
+      );
+      return;
+    }
+
+    try {
+      const { data: updated } = await api.put("/student/profile", { ...form, profileSection: section });
+      setForm(updated);
+      toast.success(`${section} updated`);
+      setEditing((current) => ({ ...current, [section]: false }));
+      clearFieldErrors(fields.map((field) => field.path));
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to update profile section");
+    }
   };
 
   const cancelSection = (section) => {
     setForm(data.profile);
     setEditing((current) => ({ ...current, [section]: false }));
+    clearFieldErrors((sectionFields[section] || []).map((field) => field.path));
   };
 
   const startEdit = (section) => {
     setEditing((current) => ({ ...current, [section]: true }));
+    clearFieldErrors((sectionFields[section] || []).map((field) => field.path));
   };
 
   const updateArrayItem = (path, index, updates) => {
@@ -450,26 +308,48 @@ export const StudentProfile = () => {
 
   const uploadAvatar = async (file) => {
     if (!file) return;
-    const avatar = await fileToDataUrl(file);
-    const updated = { ...form, avatar };
-    setForm(updated);
-    await api.put("/student/profile", updated);
-    toast.success("Profile photo uploaded");
-    await reload();
+    try {
+      const uploaded = await uploadFormFile("/student/uploads/avatar", file);
+      setForm((current) => ({ ...current, avatar: uploaded.avatar }));
+      toast.success("Profile photo uploaded");
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to upload profile photo");
+    }
   };
 
   const uploadQualificationFile = async (file, index) => {
     if (!file) return;
-    const marksheetCertificateData = await fileToDataUrl(file);
-    updateArrayItem("qualificationDetails", index, { marksheetCertificate: file.name, marksheetCertificateData, verificationStatus: "Pending", verificationRemark: "" });
-    toast.success("Qualification file selected");
+    try {
+      const uploaded = await uploadFormFile(`/student/uploads/qualification/${index}`, file);
+      updateArrayItem("qualificationDetails", index, {
+        marksheetCertificate: uploaded.file,
+        marksheetCertificateData: uploaded.fileData,
+        verificationStatus: uploaded.verificationStatus,
+        verificationRemark: uploaded.verificationRemark
+      });
+      toast.success("Qualification document uploaded");
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to upload qualification document");
+    }
   };
 
   const uploadCertificateFile = async (file, index) => {
     if (!file) return;
-    const fileData = await fileToDataUrl(file);
-    updateArrayItem("certificates", index, { file: file.name, fileData, verificationStatus: "Pending", verificationRemark: "" });
-    toast.success("Certificate file selected");
+    try {
+      const uploaded = await uploadFormFile(`/student/uploads/certificate/${index}`, file);
+      updateArrayItem("certificates", index, {
+        file: uploaded.file,
+        fileData: uploaded.fileData,
+        verificationStatus: uploaded.verificationStatus,
+        verificationRemark: uploaded.verificationRemark
+      });
+      toast.success("Certificate uploaded");
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to upload certificate");
+    }
   };
 
   const completion = profileCompletion(form);
@@ -498,7 +378,7 @@ export const StudentProfile = () => {
               <h2 className="mt-1 text-2xl font-bold dark:text-white">{completion}% Complete</h2>
               <p className="mt-1 text-sm text-ink/60 dark:text-white/60">Complete missing details and upload documents for verification.</p>
             </div>
-            <button type="button" onClick={() => window.print()} className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white dark:bg-mint dark:text-ink">
+            <button type="button" onClick={() => printProfileDocument(form)} className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white dark:bg-mint dark:text-ink">
               <Printer size={18} /> Print Profile
             </button>
           </div>
@@ -596,11 +476,12 @@ export const StudentProfile = () => {
           subtitle="Registration and academic identity"
           status={sectionStatus(basicFields, form)}
           editing={editing.profile}
+          requiredHint
           onEdit={() => startEdit("profile")}
           onSave={() => saveSection("profile")}
           onCancel={() => cancelSection("profile")}
         >
-          <FieldGrid fields={basicFields} form={form} setForm={setForm} editable={editing.profile} />
+          <FieldGrid fields={basicFields} form={form} setForm={setForm} editable={editing.profile} errors={validationErrors} onFieldChange={updateFieldValue} />
         </ProfileSection>
       </section>
 
@@ -609,13 +490,14 @@ export const StudentProfile = () => {
         subtitle="Admission, seat, category, and hostel information"
         status={sectionStatus(allotmentFields, form)}
         editing={editing.allotment}
+        requiredHint
         onEdit={() => startEdit("allotment")}
         onSave={() => saveSection("allotment")}
         onCancel={() => cancelSection("allotment")}
       >
         <div className="space-y-4">
           {allotmentGroups.map((group) => (
-            <FieldGroup key={group.title} title={group.title} fields={group.fields} form={form} setForm={setForm} editable={editing.allotment} />
+            <FieldGroup key={group.title} title={group.title} fields={group.fields} form={form} setForm={setForm} editable={editing.allotment} errors={validationErrors} onFieldChange={updateFieldValue} />
           ))}
         </div>
       </ProfileSection>
@@ -625,13 +507,14 @@ export const StudentProfile = () => {
         subtitle="Student, parent, identity, and bank information"
         status={sectionStatus(personalFields, form)}
         editing={editing.personal}
+        requiredHint
         onEdit={() => startEdit("personal")}
         onSave={() => saveSection("personal")}
         onCancel={() => cancelSection("personal")}
       >
         <div className="space-y-4">
           {personalGroups.map((group) => (
-            <FieldGroup key={group.title} title={group.title} fields={group.fields} form={form} setForm={setForm} editable={editing.personal} />
+            <FieldGroup key={group.title} title={group.title} fields={group.fields} form={form} setForm={setForm} editable={editing.personal} errors={validationErrors} onFieldChange={updateFieldValue} />
           ))}
         </div>
       </ProfileSection>
@@ -641,13 +524,14 @@ export const StudentProfile = () => {
         subtitle="Contact, correspondence address, and permanent address"
         status={sectionStatus(communicationFields, form)}
         editing={editing.communication}
+        requiredHint
         onEdit={() => startEdit("communication")}
         onSave={() => saveSection("communication")}
         onCancel={() => cancelSection("communication")}
       >
         <div className="space-y-4">
           {communicationGroups.map((group) => (
-            <FieldGroup key={group.title} title={group.title} fields={group.fields} form={form} setForm={setForm} editable={editing.communication} />
+            <FieldGroup key={group.title} title={group.title} fields={group.fields} form={form} setForm={setForm} editable={editing.communication} errors={validationErrors} onFieldChange={updateFieldValue} />
           ))}
         </div>
       </ProfileSection>
@@ -814,40 +698,143 @@ export const StudentProfile = () => {
   );
 };
 
+const paymentChip = (status) => {
+  const styles = {
+    paid: "bg-mint/20 text-mint",
+    pending: "bg-saffron/25 text-ink",
+    failed: "bg-coral/20 text-coral"
+  };
+  return <span className={`rounded-lg px-2 py-1 text-xs font-semibold ${styles[status] || styles.pending}`}>{status}</span>;
+};
+
+const printReceipt = (payment, profile) => {
+  const paidDate = payment.paidAt ? new Date(payment.paidAt).toLocaleString() : "Pending";
+  const receiptWindow = openPrintableDocument({
+    title: "Payment Receipt",
+    subtitle: "Use your browser print dialog to save this receipt as a PDF.",
+    content: `
+      <div class="grid">
+        <div class="card"><div class="label">Student</div><div class="value">${escapeHtml(profile.name)}</div></div>
+        <div class="card"><div class="label">Registration No.</div><div class="value">${escapeHtml(profile.identifier)}</div></div>
+        <div class="card"><div class="label">Fee</div><div class="value">${escapeHtml(payment.label || payment.type)}</div></div>
+        <div class="card"><div class="label">Receipt Ref</div><div class="value">${escapeHtml(payment.reference)}</div></div>
+        <div class="card"><div class="label">Status</div><div class="value">${escapeHtml(payment.status)}</div></div>
+        <div class="card"><div class="label">Payment Mode</div><div class="value">${escapeHtml(payment.paymentMode || "Online")}</div></div>
+        <div class="card"><div class="label">Paid On</div><div class="value">${escapeHtml(paidDate)}</div></div>
+        <div class="card"><div class="label">Amount</div><div class="value">INR ${escapeHtml(payment.amount.toLocaleString("en-IN"))}</div></div>
+      </div>
+    `
+  });
+  if (!receiptWindow) {
+    toast.error("Allow pop-ups in your browser to print the receipt.");
+  }
+};
+
+const PaymentHistoryTable = ({ rows, profile, onPay, focusId }) => {
+  const [query, setQuery] = useState("");
+  const filtered = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <div className="rounded-lg border border-ink/10 bg-white shadow-soft dark:border-white/10 dark:bg-ink">
+      <div className="flex flex-col gap-3 border-b border-ink/10 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-white/10">
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search payments"
+          className="focus-ring w-full rounded-lg border border-ink/20 bg-paper px-3 py-2 text-sm dark:border-white/10 dark:bg-white/10 dark:text-white sm:max-w-xs"
+        />
+        <span className="text-sm text-ink/55 dark:text-white/55">{filtered.length} records</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[860px] text-left text-sm">
+          <thead className="bg-paper text-xs uppercase tracking-wide text-ink/60 dark:bg-white/5 dark:text-white/60">
+            <tr>
+              {["Reference", "Fee", "Amount", "Status", "Date", "Action"].map((heading) => (
+                <th key={heading} className="px-4 py-3 font-semibold">{heading}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink/10 dark:divide-white/10">
+            {filtered.map((row) => (
+              <tr key={row._id} className={`${focusId === row._id ? "bg-mint/10" : ""} dark:text-white`}>
+                <td className="px-4 py-3">{row.reference}</td>
+                <td className="px-4 py-3">
+                  <div>
+                    <p className="font-semibold">{row.label || row.type}</p>
+                    <p className="text-xs text-ink/55 dark:text-white/55">{row.type}</p>
+                  </div>
+                </td>
+                <td className="px-4 py-3">INR {row.amount.toLocaleString("en-IN")}</td>
+                <td className="px-4 py-3">{paymentChip(row.status)}</td>
+                <td className="px-4 py-3">{row.paidAt ? new Date(row.paidAt).toLocaleDateString() : "-"}</td>
+                <td className="px-4 py-3">
+                  {row.status === "paid" ? (
+                    <button type="button" onClick={() => printReceipt(row, profile)} className="rounded-lg border border-ink/20 px-3 py-2 text-xs font-semibold text-ink dark:border-white/10 dark:text-white">
+                      Print Receipt
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => onPay(row._id)} className="rounded-lg bg-mint px-3 py-2 text-xs font-semibold text-ink">
+                      Make Payment
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const Transactions = ({ misc = false }) => {
-  const { loading, data } = useStudentData();
+  const { loading, data, reload } = useStudentData();
+  const location = useLocation();
+  const focusId = new URLSearchParams(location.search).get("focus");
   if (loading) return <Loader />;
   if (!data) return <EmptyState />;
   const rows = data.payments.filter((item) => (misc ? item.type !== "semester" : item.type === "semester"));
+
+  const payNow = async (paymentId) => {
+    await api.put(`/student/payments/${paymentId}/pay`, { paymentMode: "Online Gateway" });
+    toast.success("Payment completed successfully");
+    await reload();
+  };
+
   return (
-    <DataTable
-      rows={rows}
-      searchPlaceholder="Search payments"
-      columns={[
-        { key: "reference", label: "Reference" },
-        { key: "type", label: "Type" },
-        { key: "amount", label: "Amount", render: (row) => `INR ${row.amount.toLocaleString("en-IN")}` },
-        { key: "status", label: "Status", render: (row) => <span className={`rounded-lg px-2 py-1 text-xs font-semibold ${row.status === "paid" ? "bg-mint/20 text-mint" : "bg-coral/20 text-coral"}`}>{row.status}</span> },
-        { key: "createdAt", label: "Date", render: (row) => new Date(row.createdAt).toLocaleDateString() }
-      ]}
-    />
+    <div className="space-y-4">
+      <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <h2 className="text-xl font-bold dark:text-white">{misc ? "Miscellaneous Transaction History" : "Transaction History"}</h2>
+        <p className="mt-1 text-sm text-ink/60 dark:text-white/60">
+          {misc ? "Manage library, hostel, and registration fee payments." : "Track semester fee records and complete pending academic payments."}
+        </p>
+      </div>
+      <PaymentHistoryTable rows={rows} profile={data.profile} onPay={payNow} focusId={focusId} />
+    </div>
   );
 };
 
 export const MiscFees = () => {
-  const fees = [
-    { name: "Hostel maintenance", amount: 18000, status: "Pending" },
-    { name: "Library fine", amount: 750, status: "Paid" },
-    { name: "Exam form", amount: 1500, status: "Available" }
-  ];
+  const { loading, data } = useStudentData();
+  const navigate = useNavigate();
+  if (loading) return <Loader />;
+  if (!data) return <EmptyState />;
+  const fees = data.payments.filter((item) => item.type !== "semester");
   return (
     <div className="grid gap-4 md:grid-cols-3">
       {fees.map((fee) => (
-        <div key={fee.name} className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div key={fee._id} className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
           <Receipt className="text-coral" />
-          <h3 className="mt-4 font-bold dark:text-white">{fee.name}</h3>
+          <h3 className="mt-4 font-bold dark:text-white">{fee.label || fee.type}</h3>
           <p className="mt-2 text-2xl font-bold dark:text-white">INR {fee.amount.toLocaleString("en-IN")}</p>
-          <button className="focus-ring mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-semibold text-ink">{fee.status === "Paid" ? "Receipt" : "Pay Now"}</button>
+          <p className="mt-2">{paymentChip(fee.status)}</p>
+          <button
+            type="button"
+            onClick={() => (fee.status === "paid" ? printReceipt(fee, data.profile) : navigate(`/student/misc-transactions?focus=${fee._id}`))}
+            className="focus-ring mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-semibold text-ink"
+          >
+            {fee.status === "paid" ? "Receipt" : "Go to Payment"}
+          </button>
         </div>
       ))}
     </div>
@@ -855,45 +842,278 @@ export const MiscFees = () => {
 };
 
 export const SemesterRegistration = () => {
+  const { loading: profileLoading, data: profileData, reload } = useStudentData();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
+
   const load = async () => {
     const { data } = await api.get("/student/courses");
     setCourses(data);
     setLoading(false);
   };
+
   useEffect(() => {
     load().catch(() => setLoading(false));
   }, []);
-  if (loading) return <Loader />;
+
+  if (loading || profileLoading) return <Loader />;
+  if (!profileData) return <EmptyState />;
 
   const enroll = async (courseId) => {
     try {
       await api.post("/student/enroll", { courseId });
       toast.success("Enrollment request submitted");
-      load();
+      await load();
+      await reload();
     } catch (error) {
       toast.error(error.response?.data?.message || "Unable to enroll");
     }
   };
 
+  const withdraw = async (enrollmentId) => {
+    try {
+      await api.delete(`/student/enrollments/${enrollmentId}`);
+      toast.success("Enrollment request withdrawn");
+      await load();
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to withdraw request");
+    }
+  };
+
+  const approvedCourses = profileData.enrollments.filter((item) => item.status === "approved");
+  const pendingCourses = profileData.enrollments.filter((item) => item.status === "pending");
+  const activeEnrollmentIds = new Set(
+    profileData.enrollments
+      .filter((item) => ["pending", "approved"].includes(item.status))
+      .map((item) => String(item.course?._id || item.course))
+  );
+  const availableCourses = courses.filter((course) => !activeEnrollmentIds.has(String(course._id)));
+  const registrationPayment = profileData.payments.find((item) => item.type === "registration");
+  const semStatus = pendingCourses.length ? "Under Advisor Review" : approvedCourses.length ? "Registered" : "Not Started";
+  const approvedCredits = approvedCourses.reduce((sum, item) => sum + (item.course?.credits || 0), 0);
+  const groupedApproved = approvedCourses.reduce((grouped, item) => {
+    const category = item.course?.category || "Registered Courses";
+    grouped[category] = [...(grouped[category] || []), item.course];
+    return grouped;
+  }, {});
+  const uniqueCourses = (courseList) =>
+    Object.values(
+      courseList.reduce((accumulator, course) => {
+        if (course?._id) accumulator[course._id] = course;
+        return accumulator;
+      }, {})
+    );
+  const registeredCoursePool = uniqueCourses(approvedCourses.map((item) => item.course).filter(Boolean));
+  const theoryCourses = registeredCoursePool.filter((course) => course.courseKind === "theory" || !/lab/i.test(course.name));
+  const labCourses = registeredCoursePool.filter((course) => course.courseKind === "lab" || /lab/i.test(course.name));
+  const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const theorySlots = ["09:00 AM - 10:00 AM", "10:00 AM - 11:00 AM", "11:00 AM - 12:00 PM", "12:00 PM - 01:00 PM"];
+  const labDays = ["Tuesday", "Thursday", "Friday"];
+  const timetableGrid = weekdays.map((day, dayIndex) => ({
+    day,
+    sessions: theorySlots.map((time, slotIndex) => ({
+      time,
+      course: theoryCourses.length ? theoryCourses[(dayIndex * theorySlots.length + slotIndex) % theoryCourses.length] : null
+    }))
+  }));
+  const labSessions = labDays.map((day, index) => ({
+    day,
+    time: "02:00 PM - 05:00 PM",
+    course: labCourses.length ? labCourses[index % labCourses.length] : null
+  }));
+  const infoRows = [
+    ["Registration No.", profileData.profile.identifier],
+    ["Student Name", profileData.profile.name],
+    ["Semester", profileData.profile.semester],
+    ["Programme", profileData.profile.programme],
+    ["Branch", profileData.profile.branch],
+    ["Fee Programme Type", profileData.profile.programmeType],
+    ["Fee Stud Type", profileData.profile.allotmentDetails?.feeType || "-"],
+    ["Is Hostelier", profileData.profile.allotmentDetails?.hostelAllocated || "No"],
+    ["Regn Fee Pay Status", registrationPayment?.status || "pending"],
+    ["Sem Registration Status", semStatus]
+  ];
+
   return (
-    <DataTable
-      rows={courses}
-      searchPlaceholder="Search courses"
-      columns={[
-        { key: "code", label: "Code" },
-        { key: "name", label: "Course Name" },
-        { key: "credits", label: "Credits" },
-        { key: "capacity", label: "Capacity" },
-        { key: "availableSeats", label: "Available" },
-        { key: "prerequisites", label: "Prerequisites", render: (row) => row.prerequisites?.map((item) => item.code).join(", ") || "None" },
-        { key: "action", label: "Action", render: (row) => <button disabled={row.enrolled || row.availableSeats === 0} onClick={() => enroll(row._id)} className="focus-ring rounded-lg bg-ink px-3 py-2 text-xs font-semibold text-white disabled:opacity-40 dark:bg-mint dark:text-ink">{row.enrolled ? "Requested" : "Enroll"}</button> }
-      ]}
-    />
+    <div className="space-y-6">
+      <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="flex flex-wrap items-center gap-3">
+          <BookOpen className="text-mint" />
+          <div>
+            <h2 className="text-2xl font-bold dark:text-white">Semester Registration</h2>
+            <p className="text-sm text-ink/60 dark:text-white/60">Check status, review approved subjects, and manage your current course basket.</p>
+          </div>
+        </div>
+      </div>
+
+      <section className="grid gap-6 lg:grid-cols-[1fr_0.45fr]">
+        <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+          <div className="mb-4 flex items-center gap-3">
+            <ClipboardCheck className="text-mint" />
+            <h3 className="text-xl font-bold dark:text-white">Student Registration Snapshot</h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {infoRows.map(([label, value]) => (
+              <div key={label} className="rounded-lg bg-paper px-4 py-3 dark:bg-white/10">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink/55 dark:text-white/55">{label}</p>
+                <p className="mt-1 font-semibold capitalize dark:text-white">{String(value)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4">
+          <StatCard title="Approved Credits" value={approvedCredits} icon={WalletCards} />
+          <StatCard title="Approved Subjects" value={approvedCourses.length} icon={CheckCircle2} tone="saffron" />
+          <StatCard title="Pending Requests" value={pendingCourses.length} icon={Hourglass} tone="coral" />
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="mb-4 flex items-center gap-3">
+          <FileText className="text-mint" />
+          <h3 className="text-xl font-bold dark:text-white">Registered Subjects</h3>
+        </div>
+        {Object.keys(groupedApproved).length ? (
+          <div className="space-y-4">
+            {Object.entries(groupedApproved).map(([category, courseList]) => (
+              <div key={category} className="rounded-lg border border-ink/10 dark:border-white/10">
+                <div className="border-b border-ink/10 px-4 py-3 text-sm font-bold uppercase tracking-wide text-saffron dark:border-white/10">{category}</div>
+                <div className="divide-y divide-ink/10 dark:divide-white/10">
+                  {courseList.map((course) => (
+                    <div key={course._id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-semibold text-ink dark:text-white">{course.code}: {course.name}</p>
+                        <p className="text-sm text-ink/60 dark:text-white/60">{course.courseKind === "lab" ? "Lab course" : "Theory course"}</p>
+                      </div>
+                      <span className="text-sm font-semibold text-mint">{course.credits} Credits</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
+            No courses have been approved yet.
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="mb-4 flex items-center gap-3">
+          <Hourglass className="text-saffron" />
+          <h3 className="text-xl font-bold dark:text-white">Pending Request Queue</h3>
+        </div>
+        {pendingCourses.length ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {pendingCourses.map((item) => (
+              <div key={item._id} className="rounded-lg border border-ink/10 p-4 dark:border-white/10">
+                <p className="text-xs font-semibold uppercase tracking-wide text-saffron">{item.course?.category || "Course Request"}</p>
+                <h4 className="mt-1 font-bold dark:text-white">{item.course?.code}: {item.course?.name}</h4>
+                <div className="mt-4 flex items-center justify-between text-sm text-ink/60 dark:text-white/60">
+                  <span>{item.course?.credits || 0} Credits</span>
+                  <span>{item.course?.courseKind === "lab" ? "Lab" : "Theory"}</span>
+                </div>
+                <button type="button" onClick={() => withdraw(item._id)} className="focus-ring mt-4 rounded-lg border border-coral px-4 py-2 text-sm font-semibold text-coral">
+                  Withdraw Request
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
+            No pending requests. Any withdrawn subject will immediately return to the course basket.
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="mb-4 flex items-center gap-3">
+          <CalendarDays className="text-mint" />
+          <h3 className="text-xl font-bold dark:text-white">Weekly Timetable</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-left text-sm">
+            <thead className="bg-paper text-xs uppercase tracking-wide text-ink/60 dark:bg-white/5 dark:text-white/60">
+              <tr>
+                <th className="rounded-l-lg px-4 py-3 font-semibold">Day</th>
+                {theorySlots.map((slot) => (
+                  <th key={slot} className="px-4 py-3 font-semibold">{slot}</th>
+                ))}
+                <th className="rounded-r-lg px-4 py-3 font-semibold">Lab Slot</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink/10 dark:divide-white/10">
+              {timetableGrid.map((row) => {
+                const lab = labSessions.find((item) => item.day === row.day);
+                return (
+                  <tr key={row.day} className="align-top dark:text-white">
+                    <td className="px-4 py-4 font-semibold">{row.day}</td>
+                    {row.sessions.map((session) => (
+                      <td key={`${row.day}-${session.time}`} className="px-4 py-4">
+                        {session.course ? (
+                          <div>
+                            <p className="font-semibold">{session.course.code}</p>
+                            <p className="text-xs text-ink/55 dark:text-white/55">{session.course.name}</p>
+                          </div>
+                        ) : (
+                          <span className="text-ink/50 dark:text-white/50">TBA</span>
+                        )}
+                      </td>
+                    ))}
+                    <td className="px-4 py-4">
+                      {lab?.course ? (
+                        <div>
+                          <p className="font-semibold">{lab.course.code}</p>
+                          <p className="text-xs text-ink/55 dark:text-white/55">{lab.time}</p>
+                          <p className="text-xs text-ink/55 dark:text-white/55">{lab.course.name}</p>
+                        </div>
+                      ) : (
+                        <span className="text-ink/50 dark:text-white/50">No lab scheduled</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="mb-4 flex items-center gap-3">
+          <CalendarDays className="text-mint" />
+          <h3 className="text-xl font-bold dark:text-white">Open Course Basket</h3>
+        </div>
+        {availableCourses.length ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {availableCourses.map((course) => (
+              <div key={course._id} className="rounded-lg border border-ink/10 p-4 dark:border-white/10">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-saffron">{course.category}</p>
+                  <h4 className="mt-1 font-bold dark:text-white">{course.code}: {course.name}</h4>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-sm text-ink/60 dark:text-white/60">
+                  <span>{course.credits} Credits</span>
+                  <span>Prereq: {course.prerequisites?.map((item) => item.code).join(", ") || "None"}</span>
+                </div>
+                <button type="button" onClick={() => enroll(course._id)} className="focus-ring mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-semibold text-ink">
+                  Enroll
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
+            No additional courses are open for your current branch and semester.
+          </div>
+        )}
+      </section>
+    </div>
   );
 };
-
 export const Attendance = () => {
   const { loading, data } = useStudentData();
   if (loading) return <Loader />;
@@ -973,37 +1193,191 @@ export const Attendance = () => {
 };
 
 export const Notifications = () => {
-  const { loading, data } = useStudentData();
+  const { loading, data, reload } = useStudentData();
+  const [filter, setFilter] = useState("all");
   if (loading) return <Loader />;
   if (!data) return <EmptyState />;
+  const unreadCount = data.notifications.filter((note) => !note.isRead).length;
+  const visible = data.notifications.filter((note) => {
+    if (filter === "unread") return !note.isRead;
+    if (filter === "read") return note.isRead;
+    return true;
+  });
+
+  const markRead = async (id) => {
+    try {
+      await api.put(`/student/notifications/${id}/read`);
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to update notification");
+    }
+  };
+
+  const markAllRead = async () => {
+    try {
+      await api.put("/student/notifications/read-all");
+      toast.success("All notifications marked as read");
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to update notifications");
+    }
+  };
+
   return (
-    <div className="space-y-3">
-      {data.notifications.map((note) => (
-        <div key={note._id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-ink">
+    <div className="space-y-4">
+      <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold dark:text-white">Notifications Center</h2>
+            <p className="mt-1 text-sm text-ink/60 dark:text-white/60">{unreadCount} unread notices across approvals, fees, and administration updates.</p>
+          </div>
+          <button type="button" onClick={markAllRead} className="focus-ring rounded-lg border border-ink/20 px-3 py-2 text-sm font-semibold dark:border-white/10 dark:text-white">
+            Mark All as Read
+          </button>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {[
+            ["all", "All"],
+            ["unread", "Unread"],
+            ["read", "Read"]
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              className={`focus-ring rounded-lg px-3 py-2 text-sm font-semibold ${filter === key ? "bg-mint text-ink" : "border border-ink/20 text-ink dark:border-white/10 dark:text-white"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {visible.map((note) => (
+        <div key={note._id} className={`rounded-lg border bg-white p-4 shadow-soft dark:bg-ink ${note.isRead ? "border-ink/10 dark:border-white/10" : "border-mint/40"}`}>
           <div className="flex gap-3">
-            <Bell className="mt-1 text-saffron" />
-            <div>
-              <h3 className="font-bold dark:text-white">{note.title}</h3>
-              <p className="text-sm text-ink/65 dark:text-white/65">{note.message}</p>
+            <Bell className={`mt-1 ${note.isRead ? "text-ink/40 dark:text-white/40" : "text-saffron"}`} />
+            <div className="flex-1">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-bold dark:text-white">{note.title}</h3>
+                  <p className="text-sm text-ink/65 dark:text-white/65">{note.message}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-lg px-2 py-1 text-xs font-bold ${note.isRead ? "bg-ink/10 text-ink/60 dark:bg-white/10 dark:text-white/60" : "bg-mint/15 text-mint"}`}>
+                    {note.isRead ? "Read" : "Unread"}
+                  </span>
+                  {!note.isRead && (
+                    <button type="button" onClick={() => markRead(note._id)} className="focus-ring rounded-lg border border-ink/20 px-3 py-2 text-xs font-semibold dark:border-white/10 dark:text-white">
+                      Mark as Read
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="mt-3 text-xs uppercase tracking-wide text-ink/45 dark:text-white/45">{new Date(note.createdAt).toLocaleString()}</p>
             </div>
           </div>
         </div>
       ))}
+      {!visible.length && (
+        <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
+          No notifications match this filter right now.
+        </div>
+      )}
     </div>
   );
 };
 
 export const SettingsPage = () => {
-  const fields = useMemo(() => ["Current password", "New password", "Confirm password"], []);
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [preferences, setPreferences] = useState(() => {
+    const saved = localStorage.getItem("sres_settings");
+    return saved ? JSON.parse(saved) : {
+      attendanceAlerts: true,
+      feeReminders: true,
+      approvalNotifications: true,
+      emailCopies: false,
+      compactReceipts: true,
+      rememberDevices: true
+    };
+  });
+
+  const togglePreference = (key) => setPreferences((current) => ({ ...current, [key]: !current[key] }));
+  const savePreferences = () => {
+    localStorage.setItem("sres_settings", JSON.stringify(preferences));
+    toast.success("Preferences saved");
+  };
+  const changePassword = async () => {
+    setSavingPassword(true);
+    try {
+      await api.put("/auth/change-password", passwordForm);
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      toast.success("Password changed successfully");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to change password");
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
   return (
-    <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
-      <h2 className="mb-4 text-xl font-bold dark:text-white">Settings</h2>
-      <div className="grid gap-4 md:grid-cols-3">
-        {fields.map((field) => (
-          <input key={field} type="password" placeholder={field} className="focus-ring rounded-lg border border-ink/20 bg-paper px-3 py-2 dark:border-white/10 dark:bg-white/10 dark:text-white" />
-        ))}
+    <div className="space-y-6">
+      <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="flex items-center gap-3">
+          <Settings2 className="text-mint" />
+          <div>
+            <h2 className="text-xl font-bold dark:text-white">Settings</h2>
+            <p className="text-sm text-ink/60 dark:text-white/60">Manage security, alerts, and student portal preferences.</p>
+          </div>
+        </div>
       </div>
-      <button onClick={() => toast.success("Password change request saved")} className="focus-ring mt-5 rounded-lg bg-mint px-4 py-2 font-semibold text-ink">Change Password</button>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+          <h3 className="mb-4 text-lg font-bold dark:text-white">Security</h3>
+          <div className="grid gap-4 md:grid-cols-3">
+            {[
+              ["currentPassword", "Current password"],
+              ["newPassword", "New password"],
+              ["confirmPassword", "Confirm password"]
+            ].map(([key, label]) => (
+              <input
+                key={key}
+                type="password"
+                placeholder={label}
+                className="focus-ring rounded-lg border border-ink/20 bg-paper px-3 py-2 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                value={passwordForm[key]}
+                onChange={(event) => setPasswordForm((current) => ({ ...current, [key]: event.target.value }))}
+              />
+            ))}
+          </div>
+          <button disabled={savingPassword} onClick={changePassword} className="focus-ring mt-5 rounded-lg bg-mint px-4 py-2 font-semibold text-ink disabled:opacity-60">
+            {savingPassword ? "Updating..." : "Change Password"}
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+          <h3 className="mb-4 text-lg font-bold dark:text-white">Portal Preferences</h3>
+          <div className="space-y-3">
+            {[
+              ["attendanceAlerts", "Attendance Alerts"],
+              ["feeReminders", "Fee Reminders"],
+              ["approvalNotifications", "Approval Notifications"],
+              ["emailCopies", "Email Copies for Notices"],
+              ["compactReceipts", "Compact Receipt Layout"],
+              ["rememberDevices", "Remember Trusted Devices"]
+            ].map(([key, label]) => (
+              <button key={key} type="button" onClick={() => togglePreference(key)} className="flex w-full items-center justify-between rounded-lg border border-ink/10 bg-paper px-4 py-3 text-left dark:border-white/10 dark:bg-white/10">
+                <span className="font-medium dark:text-white">{label}</span>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${preferences[key] ? "bg-mint/20 text-mint" : "bg-ink/10 text-ink/60 dark:bg-white/10 dark:text-white/60"}`}>
+                  {preferences[key] ? "ON" : "OFF"}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button onClick={savePreferences} className="focus-ring mt-5 rounded-lg bg-ink px-4 py-2 font-semibold text-white dark:bg-mint dark:text-ink">Save Preferences</button>
+        </div>
+      </div>
     </div>
   );
 };

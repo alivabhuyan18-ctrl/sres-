@@ -9,10 +9,17 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true, minlength: 6 },
     role: { type: String, enum: ["student", "faculty", "admin"], required: true },
     department: { type: String, default: "Computer Science" },
-    designation: { type: String, default: "" },
-    phone: { type: String, default: "" },
+    designation: { type: String, default: "", trim: true },
+    phone: {
+      type: String,
+      default: "",
+      validate: {
+        validator: (value) => !value || /^\d{10}$/.test(String(value)),
+        message: "Phone number must be exactly 10 digits."
+      }
+    },
     address: { type: String, default: "" },
-    semester: { type: Number, default: 1 },
+    semester: { type: Number, default: 1, min: 1, max: 12 },
     avatar: { type: String, default: "" },
     applicationNo: { type: String, default: "" },
     rank: { type: String, default: "" },
@@ -32,7 +39,8 @@ const userSchema = new mongoose.Schema(
       seatCategory: { type: String, default: "" },
       category: { type: String, default: "" },
       caste: { type: String, default: "" },
-      ojeeRank: { type: String, default: "" },
+      entranceExam: { type: String, default: "" },
+      entranceRank: { type: String, default: "" },
       isLateral: { type: String, default: "" },
       hostelWillingness: { type: String, default: "" },
       hostelAllocated: { type: String, default: "" },
@@ -108,6 +116,8 @@ const userSchema = new mongoose.Schema(
         verificationRemark: { type: String, default: "" }
       }
     ],
+    resetPasswordToken: { type: String, default: "" },
+    resetPasswordExpires: { type: Date },
     advisor: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     isActive: { type: Boolean, default: true }
   },
