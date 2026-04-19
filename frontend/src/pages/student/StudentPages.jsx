@@ -52,6 +52,26 @@ const EmptyState = ({ title = "Unable to load data", message = "Please refresh t
   </div>
 );
 
+const enrollmentStatusStyles = {
+  approved: "bg-mint/15 text-mint",
+  pending: "bg-saffron/25 text-ink",
+  rejected: "bg-coral/15 text-coral"
+};
+
+const EnrollmentStatusBadge = ({ status }) => (
+  <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${enrollmentStatusStyles[status] || enrollmentStatusStyles.pending}`}>
+    {status}
+  </span>
+);
+
+const uniqueCourses = (courseList) =>
+  Object.values(
+    courseList.reduce((accumulator, course) => {
+      if (course?._id) accumulator[course._id] = course;
+      return accumulator;
+    }, {})
+  );
+
 const uploadFormFile = async (url, file) => {
   const payload = new FormData();
   payload.append("file", file);
@@ -62,31 +82,82 @@ const uploadFormFile = async (url, file) => {
 };
 
 const printProfileDocument = (profile) => {
-  const rows = [
-    ["Registration No.", profile.identifier],
-    ["Application No.", profile.applicationNo],
-    ["Name", profile.name],
-    ["Programme", profile.programme],
-    ["Programme Type", profile.programmeType],
-    ["Branch", profile.branch],
-    ["Semester", profile.semester],
-    ["Email", profile.email],
-    ["Phone", profile.phone],
-    ["Admission Status", profile.admissionStatus]
+  const sections = [
+    {
+      title: "Personal Details",
+      rows: [
+        ["Name", profile.name],
+        ["Registration Number", profile.identifier],
+        ["Application Number", profile.applicationNo],
+        ["Email", profile.email]
+      ]
+    },
+    {
+      title: "Academic Details",
+      rows: [
+        ["Programme", profile.programme],
+        ["Branch", profile.branch],
+        ["Semester", profile.semester],
+        ["Admission Status", profile.admissionStatus]
+      ]
+    },
+    {
+      title: "Admission Information",
+      rows: [
+        ["Batch", profile.allotmentDetails?.batch],
+        ["Joining Year", profile.joiningYear || profile.allotmentDetails?.joiningYear],
+        ["Admission Date", profile.allotmentDetails?.admissionDate],
+        ["Admission Type", profile.allotmentDetails?.admissionType],
+        ["Fee Type", profile.allotmentDetails?.feeType]
+      ]
+    },
+    {
+      title: "Seat & Entrance Details",
+      rows: [
+        ["Category", profile.allotmentDetails?.category],
+        ["Seat Category", profile.allotmentDetails?.seatCategory],
+        ["Entrance Exam", profile.allotmentDetails?.entranceExam],
+        ["Entrance Rank", profile.allotmentDetails?.entranceRank]
+      ]
+    }
   ];
 
   const profileWindow = openPrintableDocument({
-    title: "Student Profile Summary",
-    subtitle: "Use your browser print dialog to save this profile as a PDF.",
+    title: "Student Academic Profile Report",
+    subtitle: "Use your browser print dialog to save or download this academic profile as a PDF.",
+    showDefaultHeader: false,
     content: `
-      <div class="grid">
-        ${rows
+      <div class="report-header">
+        <div class="report-brand">
+          <div class="logo-mark">SR</div>
+          <div>
+            <p class="college-name">Student Registration and Enrolment System</p>
+            <h2 class="title">Student Academic Profile Report</h2>
+            <p class="subtitle">Academic summary prepared for record verification and student administration.</p>
+          </div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="report-sections">
+        ${sections
           .map(
-            ([label, value]) => `
-              <div class="card">
-                <div class="label">${escapeHtml(label)}</div>
-                <div class="value">${escapeHtml(value || "-")}</div>
-              </div>
+            (section) => `
+              <section class="report-section">
+                <h3 class="section-title">${escapeHtml(section.title)}</h3>
+                <div class="section-rule"></div>
+                <div class="report-grid">
+                  ${section.rows
+                    .map(
+                      ([label, value]) => `
+                        <div class="report-item">
+                          <div class="report-label">${escapeHtml(label)}</div>
+                          <div class="report-value">${escapeHtml(value || "-")}</div>
+                        </div>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </section>
             `
           )
           .join("")}
@@ -94,7 +165,7 @@ const printProfileDocument = (profile) => {
     `
   });
   if (!profileWindow) {
-    toast.error("Allow pop-ups in your browser to print the profile.");
+    toast.error("Allow pop-ups in your browser to download the profile as a PDF.");
   }
   return profileWindow;
 };
@@ -379,7 +450,7 @@ export const StudentProfile = () => {
               <p className="mt-1 text-sm text-ink/60 dark:text-white/60">Complete missing details and upload documents for verification.</p>
             </div>
             <button type="button" onClick={() => printProfileDocument(form)} className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white dark:bg-mint dark:text-ink">
-              <Printer size={18} /> Print Profile
+              <Printer size={18} /> Download Profile (PDF)
             </button>
           </div>
           <div className="mt-5 h-3 overflow-hidden rounded-full bg-ink/10 dark:bg-white/10">
@@ -845,6 +916,8 @@ export const SemesterRegistration = () => {
   const { loading: profileLoading, data: profileData, reload } = useStudentData();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submittingCourseId, setSubmittingCourseId] = useState("");
+  const [withdrawingEnrollmentId, setWithdrawingEnrollmentId] = useState("");
 
   const load = async () => {
     const { data } = await api.get("/student/courses");
@@ -860,29 +933,36 @@ export const SemesterRegistration = () => {
   if (!profileData) return <EmptyState />;
 
   const enroll = async (courseId) => {
+    setSubmittingCourseId(courseId);
     try {
-      await api.post("/student/enroll", { courseId });
-      toast.success("Enrollment request submitted");
+      const { data } = await api.post("/student/enroll", { courseId });
+      toast.success(data.message || "Enrollment request submitted");
       await load();
       await reload();
     } catch (error) {
       toast.error(error.response?.data?.message || "Unable to enroll");
+    } finally {
+      setSubmittingCourseId("");
     }
   };
 
   const withdraw = async (enrollmentId) => {
+    setWithdrawingEnrollmentId(enrollmentId);
     try {
-      await api.delete(`/student/enrollments/${enrollmentId}`);
-      toast.success("Enrollment request withdrawn");
+      const { data } = await api.delete(`/student/enrollments/${enrollmentId}`);
+      toast.success(data.message || "Enrollment request withdrawn");
       await load();
       await reload();
     } catch (error) {
       toast.error(error.response?.data?.message || "Unable to withdraw request");
+    } finally {
+      setWithdrawingEnrollmentId("");
     }
   };
 
   const approvedCourses = profileData.enrollments.filter((item) => item.status === "approved");
   const pendingCourses = profileData.enrollments.filter((item) => item.status === "pending");
+  const rejectedCourses = profileData.enrollments.filter((item) => item.status === "rejected");
   const activeEnrollmentIds = new Set(
     profileData.enrollments
       .filter((item) => ["pending", "approved"].includes(item.status))
@@ -897,13 +977,6 @@ export const SemesterRegistration = () => {
     grouped[category] = [...(grouped[category] || []), item.course];
     return grouped;
   }, {});
-  const uniqueCourses = (courseList) =>
-    Object.values(
-      courseList.reduce((accumulator, course) => {
-        if (course?._id) accumulator[course._id] = course;
-        return accumulator;
-      }, {})
-    );
   const registeredCoursePool = uniqueCourses(approvedCourses.map((item) => item.course).filter(Boolean));
   const theoryCourses = registeredCoursePool.filter((course) => course.courseKind === "theory" || !/lab/i.test(course.name));
   const labCourses = registeredCoursePool.filter((course) => course.courseKind === "lab" || /lab/i.test(course.name));
@@ -967,6 +1040,7 @@ export const SemesterRegistration = () => {
           <StatCard title="Approved Credits" value={approvedCredits} icon={WalletCards} />
           <StatCard title="Approved Subjects" value={approvedCourses.length} icon={CheckCircle2} tone="saffron" />
           <StatCard title="Pending Requests" value={pendingCourses.length} icon={Hourglass} tone="coral" />
+          <StatCard title="Rejected Requests" value={rejectedCourses.length} icon={X} tone="ink" />
         </div>
       </section>
 
@@ -1016,8 +1090,13 @@ export const SemesterRegistration = () => {
                   <span>{item.course?.credits || 0} Credits</span>
                   <span>{item.course?.courseKind === "lab" ? "Lab" : "Theory"}</span>
                 </div>
-                <button type="button" onClick={() => withdraw(item._id)} className="focus-ring mt-4 rounded-lg border border-coral px-4 py-2 text-sm font-semibold text-coral">
-                  Withdraw Request
+                <button
+                  type="button"
+                  disabled={withdrawingEnrollmentId === item._id}
+                  onClick={() => withdraw(item._id)}
+                  className="focus-ring mt-4 rounded-lg border border-coral px-4 py-2 text-sm font-semibold text-coral disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {withdrawingEnrollmentId === item._id ? "Withdrawing..." : "Withdraw Request"}
                 </button>
               </div>
             ))}
@@ -1025,6 +1104,57 @@ export const SemesterRegistration = () => {
         ) : (
           <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
             No pending requests. Any withdrawn subject will immediately return to the course basket.
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="mb-4 flex items-center gap-3">
+          <X className="text-coral" />
+          <h3 className="text-xl font-bold dark:text-white">Rejected Requests</h3>
+        </div>
+        {rejectedCourses.length ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {rejectedCourses.map((item) => {
+              const reopenedCourse = availableCourses.find((course) => String(course._id) === String(item.course?._id));
+              return (
+                <div key={item._id} className="rounded-lg border border-ink/10 p-4 dark:border-white/10">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-coral">{item.course?.category || "Rejected Request"}</p>
+                      <h4 className="mt-1 font-bold dark:text-white">{item.course?.code}: {item.course?.name}</h4>
+                    </div>
+                    <EnrollmentStatusBadge status={item.status} />
+                  </div>
+                  <div className="mt-4 flex items-center justify-between text-sm text-ink/60 dark:text-white/60">
+                    <span>{item.course?.credits || 0} Credits</span>
+                    <span>{item.course?.courseKind === "lab" ? "Lab" : "Theory"}</span>
+                  </div>
+                  <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-sm text-ink/70 dark:bg-white/10 dark:text-white/70">
+                    {item.remarks?.trim() ? `Review note: ${item.remarks}` : "No review note was added. You can submit the request again if the course is still available."}
+                  </p>
+                  {/* Rejected requests can be submitted again only when the course is back in the live basket. */}
+                  {reopenedCourse ? (
+                    <button
+                      type="button"
+                      disabled={submittingCourseId === reopenedCourse._id}
+                      onClick={() => enroll(reopenedCourse._id)}
+                      className="focus-ring mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {submittingCourseId === reopenedCourse._id ? "Submitting..." : "Enroll Again"}
+                    </button>
+                  ) : (
+                    <p className="mt-4 text-xs font-medium uppercase tracking-wide text-ink/45 dark:text-white/45">
+                      This course is not currently open in your basket.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
+            No rejected requests at the moment.
           </div>
         )}
       </section>
@@ -1091,16 +1221,27 @@ export const SemesterRegistration = () => {
           <div className="grid gap-4 lg:grid-cols-2">
             {availableCourses.map((course) => (
               <div key={course._id} className="rounded-lg border border-ink/10 p-4 dark:border-white/10">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-saffron">{course.category}</p>
-                  <h4 className="mt-1 font-bold dark:text-white">{course.code}: {course.name}</h4>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-saffron">{course.category}</p>
+                    <h4 className="mt-1 font-bold dark:text-white">{course.code}: {course.name}</h4>
+                  </div>
+                  <div className="rounded-lg bg-paper px-3 py-2 text-right text-xs font-semibold text-ink/70 dark:bg-white/10 dark:text-white/70">
+                    <p>Capacity: {course.capacity}</p>
+                    <p className={`${course.availableSeats > 0 ? "text-mint" : "text-coral"}`}>Available: {course.availableSeats}</p>
+                  </div>
                 </div>
                 <div className="mt-4 flex items-center justify-between text-sm text-ink/60 dark:text-white/60">
                   <span>{course.credits} Credits</span>
                   <span>Prereq: {course.prerequisites?.map((item) => item.code).join(", ") || "None"}</span>
                 </div>
-                <button type="button" onClick={() => enroll(course._id)} className="focus-ring mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-semibold text-ink">
-                  Enroll
+                <button
+                  type="button"
+                  disabled={submittingCourseId === course._id}
+                  onClick={() => enroll(course._id)}
+                  className="focus-ring mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {submittingCourseId === course._id ? "Submitting..." : "Enroll"}
                 </button>
               </div>
             ))}
@@ -1114,6 +1255,87 @@ export const SemesterRegistration = () => {
     </div>
   );
 };
+
+export const MyCourses = () => {
+  const { loading, data } = useStudentData();
+  if (loading) return <Loader />;
+  if (!data) return <EmptyState />;
+
+  const rows = [...data.enrollments].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt));
+  const statusCounts = ["approved", "pending", "rejected"].map((status) => ({
+    status,
+    count: rows.filter((item) => item.status === status).length
+  }));
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="flex flex-wrap items-center gap-3">
+          <BookOpen className="text-mint" />
+          <div>
+            <h2 className="text-2xl font-bold dark:text-white">My Courses</h2>
+            <p className="text-sm text-ink/60 dark:text-white/60">Track every course request in one place, including pending, approved, and rejected decisions.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {statusCounts.map((item) => (
+          <StatCard
+            key={item.status}
+            title={`${item.status.charAt(0).toUpperCase()}${item.status.slice(1)} Courses`}
+            value={item.count}
+            icon={item.status === "approved" ? CheckCircle2 : item.status === "pending" ? Hourglass : X}
+            tone={item.status === "approved" ? "mint" : item.status === "pending" ? "saffron" : "coral"}
+          />
+        ))}
+      </div>
+
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-ink">
+        <div className="mb-4 flex items-center gap-3">
+          <FileText className="text-mint" />
+          <h3 className="text-xl font-bold dark:text-white">Enrollment Status Overview</h3>
+        </div>
+        {rows.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[840px] text-left text-sm">
+              <thead className="bg-paper text-xs uppercase tracking-wide text-ink/60 dark:bg-white/5 dark:text-white/60">
+                <tr>
+                  <th className="rounded-l-lg px-4 py-3 font-semibold">Course</th>
+                  <th className="px-4 py-3 font-semibold">Category</th>
+                  <th className="px-4 py-3 font-semibold">Credits</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Remarks</th>
+                  <th className="rounded-r-lg px-4 py-3 font-semibold">Last Updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ink/10 dark:divide-white/10">
+                {rows.map((item) => (
+                  <tr key={item._id} className="align-top dark:text-white">
+                    <td className="px-4 py-4">
+                      <p className="font-semibold">{item.course?.code}: {item.course?.name}</p>
+                      <p className="mt-1 text-xs text-ink/55 dark:text-white/55">{item.course?.courseKind === "lab" ? "Lab course" : "Theory course"}</p>
+                    </td>
+                    <td className="px-4 py-4 text-ink/70 dark:text-white/70">{item.course?.category || "-"}</td>
+                    <td className="px-4 py-4">{item.course?.credits || 0}</td>
+                    <td className="px-4 py-4"><EnrollmentStatusBadge status={item.status} /></td>
+                    <td className="px-4 py-4 text-ink/70 dark:text-white/70">{item.remarks?.trim() || "No remarks"}</td>
+                    <td className="px-4 py-4 text-ink/70 dark:text-white/70">{new Date(item.updatedAt || item.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-ink/20 p-6 text-center text-sm text-ink/60 dark:border-white/20 dark:text-white/60">
+            You have not submitted any course requests yet.
+          </div>
+        )}
+      </section>
+    </div>
+  );
+};
+
 export const Attendance = () => {
   const { loading, data } = useStudentData();
   if (loading) return <Loader />;

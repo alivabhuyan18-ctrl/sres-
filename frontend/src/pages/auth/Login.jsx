@@ -12,16 +12,23 @@ const roles = [
 ];
 
 const Login = () => {
-  const { isAuthenticated, user, login } = useAuth();
+  const { isAuthenticated, user, login, register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
 
-  const [mode, setMode] = useState(query.get("mode") === "reset" ? "reset" : "login");
+  const [mode, setMode] = useState(query.get("mode") === "reset" ? "reset" : query.get("mode") === "signup" ? "signup" : "login");
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("REG2024001");
   const [password, setPassword] = useState("password123");
   const [loading, setLoading] = useState(false);
+  const [signupForm, setSignupForm] = useState({
+    name: "",
+    identifier: "",
+    email: "",
+    password: "",
+    confirmPassword: ""
+  });
   const [recoveryIdentifier, setRecoveryIdentifier] = useState("REG2024001");
   const [resetToken, setResetToken] = useState(query.get("token") || "");
   const [resetPassword, setResetPassword] = useState("");
@@ -48,6 +55,34 @@ const Login = () => {
       navigate(`/${loggedIn.role}`);
     } catch (error) {
       toast.error(error.response?.data?.message || "Login failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitSignup = async (event) => {
+    event.preventDefault();
+    if (!signupForm.name || !signupForm.identifier || !signupForm.email || !signupForm.password) {
+      toast.error("Please complete all signup fields.");
+      return;
+    }
+    if (signupForm.password !== signupForm.confirmPassword) {
+      toast.error("Password and confirm password must match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const created = await register({
+        name: signupForm.name,
+        identifier: signupForm.identifier,
+        email: signupForm.email,
+        password: signupForm.password,
+        role: "student"
+      });
+      navigate(`/${created.role}`);
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Unable to create account");
     } finally {
       setLoading(false);
     }
@@ -103,10 +138,19 @@ const Login = () => {
     setRecoveryStatus(null);
   };
 
-  const title = mode === "login" ? "Sign in" : mode === "forgot" ? "Recover password" : "Set a new password";
+  const title =
+    mode === "login"
+      ? "Sign in"
+      : mode === "signup"
+        ? "Create student account"
+        : mode === "forgot"
+          ? "Recover password"
+          : "Set a new password";
   const subtitle =
     mode === "login"
       ? "Choose your portal and continue."
+      : mode === "signup"
+        ? "Create a student account and start your academic workflow."
       : mode === "forgot"
         ? "Generate a secure reset link for your account."
         : "Use the one-time reset token to finish recovery.";
@@ -197,6 +241,99 @@ const Login = () => {
                 <button disabled={loading} className="focus-ring flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 font-semibold text-white disabled:opacity-60 dark:bg-mint dark:text-ink">
                   <ShieldCheck size={18} />
                   {loading ? "Signing in..." : "Login"}
+                </button>
+
+                <div className="mt-4 rounded-lg border border-ink/10 bg-paper/70 p-3 text-sm text-ink/70 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
+                  <p className="font-semibold dark:text-white">New student?</p>
+                  <p className="mt-1">Create your own account here. Faculty and admin accounts are created through the administration panel.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signup");
+                      navigate("/login?mode=signup", { replace: true });
+                    }}
+                    className="mt-3 text-sm font-semibold text-coral"
+                  >
+                    Open student signup
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {mode === "signup" && (
+              <form onSubmit={submitSignup} className="space-y-4">
+                <div className="rounded-lg border border-mint/30 bg-mint/10 p-3 text-sm text-ink/75 dark:text-white/75">
+                  <p className="font-semibold dark:text-white">Student self-registration</p>
+                  <p className="mt-1">Use this form to create a new student account. Faculty and admin accounts remain admin-managed.</p>
+                </div>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium dark:text-white">Full Name</span>
+                  <div className="rounded-lg border border-ink/20 bg-paper px-3 dark:border-white/10 dark:bg-white/10">
+                    <input
+                      className="focus-ring w-full bg-transparent py-3 text-sm dark:text-white"
+                      value={signupForm.name}
+                      onChange={(event) => setSignupForm((current) => ({ ...current, name: event.target.value }))}
+                    />
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium dark:text-white">Registration Number</span>
+                  <div className="flex items-center gap-2 rounded-lg border border-ink/20 bg-paper px-3 dark:border-white/10 dark:bg-white/10">
+                    <Mail size={18} className="text-ink/50 dark:text-white/50" />
+                    <input
+                      className="focus-ring w-full bg-transparent py-3 text-sm dark:text-white"
+                      value={signupForm.identifier}
+                      onChange={(event) => setSignupForm((current) => ({ ...current, identifier: event.target.value }))}
+                    />
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium dark:text-white">Email Address</span>
+                  <div className="flex items-center gap-2 rounded-lg border border-ink/20 bg-paper px-3 dark:border-white/10 dark:bg-white/10">
+                    <Mail size={18} className="text-ink/50 dark:text-white/50" />
+                    <input
+                      type="email"
+                      className="focus-ring w-full bg-transparent py-3 text-sm dark:text-white"
+                      value={signupForm.email}
+                      onChange={(event) => setSignupForm((current) => ({ ...current, email: event.target.value }))}
+                    />
+                  </div>
+                </label>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-medium dark:text-white">Password</span>
+                    <div className="flex items-center gap-2 rounded-lg border border-ink/20 bg-paper px-3 dark:border-white/10 dark:bg-white/10">
+                      <LockKeyhole size={18} className="text-ink/50 dark:text-white/50" />
+                      <input
+                        type="password"
+                        className="focus-ring w-full bg-transparent py-3 text-sm dark:text-white"
+                        value={signupForm.password}
+                        onChange={(event) => setSignupForm((current) => ({ ...current, password: event.target.value }))}
+                      />
+                    </div>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-medium dark:text-white">Confirm Password</span>
+                    <div className="flex items-center gap-2 rounded-lg border border-ink/20 bg-paper px-3 dark:border-white/10 dark:bg-white/10">
+                      <LockKeyhole size={18} className="text-ink/50 dark:text-white/50" />
+                      <input
+                        type="password"
+                        className="focus-ring w-full bg-transparent py-3 text-sm dark:text-white"
+                        value={signupForm.confirmPassword}
+                        onChange={(event) => setSignupForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <button disabled={loading} className="focus-ring flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 font-semibold text-white disabled:opacity-60 dark:bg-mint dark:text-ink">
+                  <ShieldCheck size={18} />
+                  {loading ? "Creating account..." : "Create Student Account"}
                 </button>
               </form>
             )}

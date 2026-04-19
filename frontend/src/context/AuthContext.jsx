@@ -8,13 +8,24 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(localStorage.getItem("sres_token"));
   const [user, setUser] = useState(() => JSON.parse(localStorage.getItem("sres_user") || "null"));
 
-  const login = async (payload) => {
-    const { data } = await api.post("/auth/login", payload);
+  const persistSession = (data) => {
     localStorage.setItem("sres_token", data.token);
     localStorage.setItem("sres_user", JSON.stringify(data.user));
     setToken(data.token);
     setUser(data.user);
+  };
+
+  const login = async (payload) => {
+    const { data } = await api.post("/auth/login", payload);
+    persistSession(data);
     toast.success(`Welcome, ${data.user.name}`);
+    return data.user;
+  };
+
+  const register = async (payload) => {
+    const { data } = await api.post("/auth/register", payload);
+    persistSession(data);
+    toast.success(`Account created for ${data.user.name}`);
     return data.user;
   };
 
@@ -26,7 +37,7 @@ export const AuthProvider = ({ children }) => {
     toast("Signed out");
   };
 
-  const value = useMemo(() => ({ token, user, isAuthenticated: Boolean(token), login, logout }), [token, user]);
+  const value = useMemo(() => ({ token, user, isAuthenticated: Boolean(token), login, register, logout }), [token, user]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 

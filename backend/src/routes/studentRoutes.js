@@ -16,11 +16,14 @@ router.use(protect, authorize("student"));
 const sendValidationErrors = (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    res.status(400).json({ message: "Validation failed", errors: errors.array() });
+    res.status(400).json({ success: false, message: "Validation failed", errors: errors.array() });
     return true;
   }
   return false;
 };
+
+const sendError = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
+const sendSuccess = (res, status, message, payload = {}) => res.status(status).json({ success: true, message, ...payload });
 
 const allowedProfileFields = [
   "name",
@@ -357,21 +360,22 @@ router.post("/enroll", [body("courseId").isMongoId()], async (req, res) => {
   if (sendValidationErrors(req, res)) return;
 
   const course = await Course.findById(req.body.courseId).populate("prerequisites");
-  if (!course || !course.isActive) return res.status(404).json({ message: "Course not found" });
+  if (!course || !course.isActive) return sendError(res, 404, "Course not found");
 
   const duplicate = await Enrollment.findOne({ student: req.user._id, course: course._id });
   if (duplicate?.status === "pending" || duplicate?.status === "approved") {
-    return res.status(409).json({ message: "You already requested or enrolled in this course" });
+    return sendError(res, 409, "You already requested or enrolled in this course");
   }
 
+  // Capacity is derived from live enrollment records so seat availability stays consistent.
   const occupied = await Enrollment.countDocuments({ course: course._id, status: { $in: ["pending", "approved"] } });
-  if (occupied >= course.capacity) return res.status(400).json({ message: "Course capacity is full" });
+  if (occupied >= course.capacity) return sendError(res, 400, "Course is full");
 
   const approved = await Enrollment.find({ student: req.user._id, status: "approved" }).select("course");
   const approvedIds = new Set(approved.map((item) => String(item.course)));
   const missing = course.prerequisites.filter((item) => !approvedIds.has(String(item._id)));
   if (missing.length) {
-    return res.status(400).json({ message: `Prerequisite missing: ${missing.map((item) => item.code).join(", ")}` });
+    return sendError(res, 400, `Prerequisite missing: ${missing.map((item) => item.code).join(", ")}`);
   }
 
   if (duplicate?.status === "rejected") {
@@ -387,7 +391,9 @@ router.post("/enroll", [body("courseId").isMongoId()], async (req, res) => {
       entityId: duplicate._id,
       summary: `Enrollment request resubmitted for ${course.code}`
     });
-    return res.status(201).json(await duplicate.populate("course", "code name credits"));
+    return sendSuccess(res, 201, "Enrollment request resubmitted", {
+      enrollment: await duplicate.populate("course", "code name credits")
+    });
   }
 
   const enrollment = await Enrollment.create({ student: req.user._id, course: course._id });
@@ -398,12 +404,16 @@ router.post("/enroll", [body("courseId").isMongoId()], async (req, res) => {
     entityId: enrollment._id,
     summary: `Enrollment requested for ${course.code}`
   });
-  res.status(201).json(await enrollment.populate("course", "code name credits"));
+  res.status(201).json({
+    success: true,
+    message: "Enrollment request submitted",
+    enrollment: await enrollment.populate("course", "code name credits")
+  });
 });
 
 router.delete("/enrollments/:id", async (req, res) => {
   const enrollment = await Enrollment.findOne({ _id: req.params.id, student: req.user._id, status: "pending" });
-  if (!enrollment) return res.status(404).json({ message: "Pending enrollment not found" });
+  if (!enrollment) return sendError(res, 404, "Pending enrollment not found");
 
   await enrollment.deleteOne();
   await logAudit({
@@ -414,7 +424,7 @@ router.delete("/enrollments/:id", async (req, res) => {
     summary: "Pending enrollment request withdrawn"
   });
 
-  res.json({ message: "Enrollment request withdrawn" });
+  res.json({ success: true, message: "Enrollment request withdrawn" });
 });
 
 router.put("/payments/:id/pay", async (req, res) => {

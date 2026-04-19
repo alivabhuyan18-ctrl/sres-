@@ -28,6 +28,7 @@ export const menuByRole = {
     ["Miscellaneous Fees", "/student/misc-fees", CreditCard],
     ["Misc Transaction History", "/student/misc-transactions", Receipt],
     ["Semester Registration", "/student/registration", BookOpen],
+    ["My Courses", "/student/my-courses", FileCheck],
     ["Attendance", "/student/attendance", ClipboardCheck],
     ["Notifications", "/student/notifications", Bell],
     ["Settings", "/student/settings", Settings]

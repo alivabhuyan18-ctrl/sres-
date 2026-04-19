@@ -20,6 +20,7 @@ const FacultyReports = lazy(() => import("./pages/faculty/FacultyPages").then((m
 const StudentList = lazy(() => import("./pages/faculty/FacultyPages").then((module) => ({ default: module.StudentList })));
 const Attendance = lazy(() => import("./pages/student/StudentPages").then((module) => ({ default: module.Attendance })));
 const MiscFees = lazy(() => import("./pages/student/StudentPages").then((module) => ({ default: module.MiscFees })));
+const MyCourses = lazy(() => import("./pages/student/StudentPages").then((module) => ({ default: module.MyCourses })));
 const Notifications = lazy(() => import("./pages/student/StudentPages").then((module) => ({ default: module.Notifications })));
 const SemesterRegistration = lazy(() => import("./pages/student/StudentPages").then((module) => ({ default: module.SemesterRegistration })));
 const SettingsPage = lazy(() => import("./pages/student/StudentPages").then((module) => ({ default: module.SettingsPage })));
@@ -41,6 +42,7 @@ const App = () => (
           <Route path="misc-fees" element={<MiscFees />} />
           <Route path="misc-transactions" element={<Transactions misc />} />
           <Route path="registration" element={<SemesterRegistration />} />
+          <Route path="my-courses" element={<MyCourses />} />
           <Route path="attendance" element={<Attendance />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="settings" element={<SettingsPage />} />
